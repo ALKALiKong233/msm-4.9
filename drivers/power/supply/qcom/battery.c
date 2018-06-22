@@ -1,4 +1,5 @@
-/* Copyright (c) 2018 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018,2019 The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -103,7 +104,6 @@ enum print_reason {
 
 enum {
 	AICL_RERUN_WA_BIT	= BIT(0),
-	FORCE_INOV_DISABLE_BIT	= BIT(1),
 };
 
 static int debug_mask;
@@ -1279,8 +1279,7 @@ static bool is_parallel_available(struct pl_data *chip)
 	chip->pl_mode = pval.intval;
 
 	/* Disable autonomous votage increments for USBIN-USBIN */
-	if (IS_USBIN(chip->pl_mode)
-			&& (chip->wa_flags & FORCE_INOV_DISABLE_BIT)) {
+	if (IS_USBIN(chip->pl_mode)) {
 		if (!chip->hvdcp_hw_inov_dis_votable)
 			chip->hvdcp_hw_inov_dis_votable =
 					find_votable("HVDCP_HW_INOV_DIS");
@@ -1574,9 +1573,7 @@ static void pl_config_init(struct pl_data *chip, int smb_version)
 	switch (smb_version) {
 	case PMI8998_SUBTYPE:
 	case PM660_SUBTYPE:
-		chip->wa_flags = AICL_RERUN_WA_BIT | FORCE_INOV_DISABLE_BIT;
-		break;
-	case PMI632_SUBTYPE:
+		chip->wa_flags = AICL_RERUN_WA_BIT;
 		break;
 	default:
 		break;
@@ -1605,6 +1602,12 @@ int qcom_batt_init(int smb_version)
 	chip->pl_ws = wakeup_source_register("qcom-battery");
 	if (!chip->pl_ws)
 		goto cleanup;
+
+	INIT_DELAYED_WORK(&chip->status_change_work, status_change_work);
+	INIT_WORK(&chip->pl_taper_work, pl_taper_work);
+	INIT_WORK(&chip->pl_disable_forever_work, pl_disable_forever_work);
+	INIT_DELAYED_WORK(&chip->pl_awake_work, pl_awake_work);
+	INIT_DELAYED_WORK(&chip->fcc_stepper_work, fcc_stepper_work);
 
 	chip->fcc_votable = create_votable("FCC", VOTE_MIN,
 					pl_fcc_vote_callback,
@@ -1660,12 +1663,6 @@ int qcom_batt_init(int smb_version)
 
 	vote(chip->pl_disable_votable, PL_INDIRECT_VOTER, true, 0);
 
-	INIT_DELAYED_WORK(&chip->status_change_work, status_change_work);
-	INIT_WORK(&chip->pl_taper_work, pl_taper_work);
-	INIT_WORK(&chip->pl_disable_forever_work, pl_disable_forever_work);
-	INIT_DELAYED_WORK(&chip->pl_awake_work, pl_awake_work);
-	INIT_DELAYED_WORK(&chip->fcc_stepper_work, fcc_stepper_work);
-
 	rc = pl_register_notifier(chip);
 	if (rc < 0) {
 		pr_err("Couldn't register psy notifier rc = %d\n", rc);
@@ -1678,7 +1675,6 @@ int qcom_batt_init(int smb_version)
 		goto unreg_notifier;
 	}
 
-	chip->pl_disable = true;
 	chip->qcom_batt_class.name = "qcom-battery",
 	chip->qcom_batt_class.owner = THIS_MODULE,
 	chip->qcom_batt_class.class_attrs = pl_attributes;
